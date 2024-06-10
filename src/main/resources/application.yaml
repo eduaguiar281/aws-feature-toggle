@@ -1,0 +1,10 @@
+ktor:
+    application:
+        modules:
+            - io.arcotech.ApplicationKt.module
+    deployment:
+        port: 8080
+feature-toggles:
+    applicationId: eug6bf0
+    profileId: 9n549gm
+    environmentId: g125og6

@@ -1,36 +1,46 @@
-package io.arcotech.Features
+package io.arcotech.featuretoggles
 
 import io.arcotech.AwsService
 import io.arcotech.CacheService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
+import io.arcotech.featuretoggles.filters.DefaultFeatureFilter
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.minutes
 
 class FeatureManagement (private val service: AwsService, private val cacheService: CacheService) {
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val key: String = service.getKey()
-    private var featureConfiguration: String? = null
+    private val refreshThreshold: Long = 1.minutes.inWholeMilliseconds // Atualizar se o cache estiver prestes a expirar em 1 minuto
 
-    suspend fun getFeatureToggles() {
-        val cachedToggles = cacheService.getValue(key)
-        if (cachedToggles != null) {
-            // Serve stale data immediately
-            scope.launch {
-                try {
-                    // Revalidate in background
-                    val freshToggles = service.fetchFeatureToggles()
-                    cacheService.saveValue(freshToggles, key)
-                } catch (e: Exception) {
-                    println("Ocorreu um erro ao recuperar a configuração. Mensagem: ${e.message}")
+    private suspend fun getFeatureToggles(): String {
+        val cachedEntry = cacheService.getValue(key)
+        if (cachedEntry != null) {
+            val currentTime = System.currentTimeMillis()
+            // Checar se está prestes a expirar
+            if (currentTime - cachedEntry.timestamp >= (2.minutes.inWholeMilliseconds - refreshThreshold)) {
+                // Lançar atualização em segundo plano
+                GlobalScope.launch {
+                    refreshFeatureToggle()
                 }
             }
-            featureConfiguration = cachedToggles
-        } else {
-            val freshToggles = service.fetchFeatureToggles()
-            cacheService.saveValue(freshToggles, key)
-            featureConfiguration = freshToggles
+            return cachedEntry.value
         }
+        return refreshFeatureToggle()
+    }
+
+    private suspend fun refreshFeatureToggle(): String{
+        val freshToggles = service.fetchFeatureToggles()
+        cacheService.saveValue(freshToggles, key)
+        return freshToggles
+    }
+
+    suspend fun isEnabled(featureName: String):Boolean{
+        val filter = DefaultFeatureFilter(featureName, getFeatureToggles())
+        return filter.evaluate()
+    }
+
+    suspend fun <T: DefaultFeatureFilter> isEnabled(filter: T): Boolean{
+        filter.setConfigurationJson(getFeatureToggles())
+        return filter.evaluate()
     }
 }
